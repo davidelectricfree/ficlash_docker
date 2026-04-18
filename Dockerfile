@@ -56,7 +56,9 @@ COPY --from=extractor /dist/FlClash /usr/share/FlClash
 RUN ln -sf /usr/share/FlClash/FlClash /usr/local/bin/FlClash
 
 # ── 安装运行时依赖 ──
-# libgl1: OpenGL 运行时（FlClash/Flutter 启动时需要 libGL.so.1）
+# libgl1: OpenGL 运行时（提供 libGL.so.1）
+# libegl1: EGL 运行时（提供 libEGL.so.1，Flutter 启动时 dlopen 必需，否则 SIGABRT）
+# libatk-adaptor: ATK 辅助功能桥接（消除 atk_socket_embed assertion 警告）
 # locales: 中文 locale 支持（否则 Gtk-WARNING locale not supported）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -64,6 +66,8 @@ RUN apt-get update && \
         libayatana-appindicator3-1 \
         libgtk-3-0 \
         libgl1 \
+        libegl1 \
+        libatk-adaptor \
         socat \
         locales \
         fonts-noto-cjk \
