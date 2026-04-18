@@ -56,19 +56,29 @@ COPY --from=extractor /dist/FlClash /usr/share/FlClash
 RUN ln -sf /usr/share/FlClash/FlClash /usr/local/bin/FlClash
 
 # ── 安装运行时依赖 ──
+# libgl1: OpenGL 运行时（FlClash/Flutter 启动时需要 libGL.so.1）
+# locales: 中文 locale 支持（否则 Gtk-WARNING locale not supported）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libkeybinder-3.0-0 \
         libayatana-appindicator3-1 \
         libgtk-3-0 \
+        libgl1 \
         socat \
+        locales \
         fonts-noto-cjk \
         fonts-wqy-zenhei && \
+    sed -i '/zh_CN.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen zh_CN.UTF-8 && \
     rm -rf /var/lib/apt/lists/*
 
 # ── 区域设置 ──
 ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
+
+# ── Flutter/GTK 渲染设置 ──
+# VNC 环境无 GPU，必须用 cairo 软件渲染（默认 GL 渲染会 SIGABRT）
+ENV GSK_RENDERER=cairo
 
 # ── 启动脚本 ──
 # socat: 宿主机 9091 → FlClash 内部 API 9090
