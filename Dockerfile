@@ -1,15 +1,25 @@
 #
 # FlClash Dockerfile
-# Multi-stage build: Ubuntu 提取 AppImage → Alpine 运行（最小体积 + 最低 CPU 占用）
+# Multi-stage build: Ubuntu 提取 deb 二进制 → Alpine 运行（最小体积 + 最低 CPU 占用）
 #
 
-# ── Stage 1：从 deb 包提取二进制（Ubuntu apt-get 最可靠）──
+# ── Stage 1：从 deb 包提取二进制（Ubuntu apt-get 自动处理依赖）──
 FROM ubuntu:24.04 AS extractor
 
 ARG FLCLASH_VERSION=latest
 
+# 一次性安装工具包 + FlClash 运行时依赖，再下载并安装 deb
+# 关键：apt-get update 后不删除 lists，确保后续 apt-get install .deb 能解析依赖
 RUN apt-get update && \
-    apt-get install -y wget jq curl && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+        wget jq curl \
+        libkeybinder-3.0-0 \
+        libayatana-appindicator3-1 \
+        libgtk-3-0 \
+        libblkid1 \
+        liblzma5 \
+        libsecret-1-0 && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp
 
@@ -23,10 +33,12 @@ RUN FLCLASH_VERSION=$(curl -s https://api.github.com/repos/chen08209/FlClash/rel
     curl -fL -o /tmp/flclash.deb "$URL" && \
     ls -la /tmp/flclash.deb
 
-# 安装 deb（apt-get 自动处理所有依赖并把二进制放到 /usr/bin/flclash）
+# 安装 deb：先 apt-get update 恢复索引，再用 apt-get install 解析 deb 依赖
 RUN apt-get update && \
     apt-get install -y /tmp/flclash.deb && \
     rm /tmp/flclash.deb && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /dist && \
     ls -la /usr/bin/flclash && \
     cp /usr/bin/flclash /dist/flclash && \
     chmod +x /dist/flclash && \
