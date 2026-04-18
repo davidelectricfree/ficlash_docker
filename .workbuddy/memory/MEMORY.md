@@ -14,6 +14,8 @@
 - FlClash 是 glibc 编译的 GTK/Flutter 应用，**Alpine 的 musl libc 不兼容**（exec 报 "not found"，exit 127）
 - Flutter 启动时在 GSK 渲染器初始化之前先 dlopen libEGL.so.1，**即使设了 GSK_RENDERER=cairo 也必须装 libegl1**，否则 SIGABRT
 - `connectivity_plus` 插件通过 D-Bus NetworkManager 检测网络，**容器内无 system bus socket 会导致无限重试吃满 CPU**，必须安装 dbus 包并启动 dbus-daemon --system
+- 仅挂载宿主机 `/run/dbus/system_bus_socket` 不够，群晖 DSM 上 NetworkManager 不运行，connectivity_plus 连上 D-Bus 后找不到 NM 服务仍会重试。**必须在容器内自建 dbus-daemon + NetworkManager**
+- 容器内 NetworkManager 无需 NET_ADMIN 也可启动，会在 D-Bus 上注册服务
 - `/dist` 目录需显式 `mkdir -p` 创建
 - control.tar.zst 需用 zstandard 库解压，非 gzip
 - FlClash 目录包含资源文件（不只是二进制），必须整体复制 `/usr/share/FlClash`

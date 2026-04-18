@@ -82,8 +82,9 @@ RUN apt-get update && \
 # D-Bus system bus 支持
 # connectivity_plus 通过 D-Bus 连接 NetworkManager 检测网络状态
 # 容器内需有 dbus-daemon 提供 system bus socket，否则 connectivity_plus 无限重试吃满 CPU
-# 方案：安装 dbus + network-manager（提供 NM 的 D-Bus 服务和 introspection 数据）
-#       startapp.sh 中启动 dbus-daemon --system + NetworkManager
+# 方案：始终在容器内自建 dbus-daemon + NetworkManager
+# NM 无需 NET_ADMIN 也能启动，只是无法管理网络接口，但会在 D-Bus 上注册并报告状态
+# 注意：不要挂载宿主机 /run/dbus/system_bus_socket，否则容器内 dbus-daemon 无法启动
 RUN mkdir -p /var/run/dbus && \
     dbus-uuidgen --ensure && \
     printf '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"\n\
@@ -110,21 +111,17 @@ ENV LC_ALL=zh_CN.UTF-8
 ENV GSK_RENDERER=cairo
 
 # ── 启动脚本 ──
-# D-Bus system bus 策略：
-#   若宿主机已挂载 /run/dbus/system_bus_socket，则直接使用（宿主机有完整 NetworkManager）
-#   否则容器内自建 dbus-daemon + NetworkManager
+# 始终在容器内启动 dbus-daemon + NetworkManager
+# connectivity_plus 需要通过 D-Bus 查询 NM 的网络状态，否则无限重试吃满 CPU
+# NM 在容器内无需 NET_ADMIN 也可启动，只是报告 ASLEEP 状态（connectivity_plus 会将其视为已连接）
+# 重要：不要挂载宿主机的 /run/dbus/system_bus_socket，让容器使用自己的
 # socat: 宿主机 9091 → FlClash 内部 API 9090
 RUN printf '#!/bin/sh\n\
 mkdir -p /var/run/dbus\n\
-if [ -S /run/dbus/system_bus_socket ]; then\n\
-  echo "检测到宿主机 D-Bus system bus，跳过容器内 dbus-daemon"\n\
-else\n\
-  echo "未检测到宿主机 D-Bus system bus，启动容器内 dbus-daemon"\n\
-  rm -f /var/run/dbus/pid /var/run/dbus/system_bus_socket\n\
-  dbus-daemon --system --config-file=/etc/dbus-1/system.conf\n\
-  NetworkManager --no-daemon &\n\
-  sleep 1\n\
-fi\n\
+rm -f /var/run/dbus/pid /var/run/dbus/system_bus_socket\n\
+dbus-daemon --system --config-file=/etc/dbus-1/system.conf\n\
+NetworkManager &\n\
+sleep 2\n\
 socat TCP-LISTEN:9091,fork,reuseaddr TCP:127.0.0.1:9090 &\n\
 exec FlClash\n' > /startapp.sh && chmod +x /startapp.sh
 
