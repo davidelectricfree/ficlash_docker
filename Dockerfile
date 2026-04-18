@@ -59,6 +59,7 @@ RUN ln -sf /usr/share/FlClash/FlClash /usr/local/bin/FlClash
 # libgl1: OpenGL 运行时（提供 libGL.so.1）
 # libegl1: EGL 运行时（提供 libEGL.so.1，Flutter 启动时 dlopen 必需，否则 SIGABRT）
 # libatk-adaptor: ATK 辅助功能桥接（消除 atk_socket_embed assertion 警告）
+# dbus: 系统消息总线（connectivity_plus 通过 D-Bus/NetworkManager 检测网络，无 system bus 会 CPU 狂转）
 # locales: 中文 locale 支持（否则 Gtk-WARNING locale not supported）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -68,6 +69,8 @@ RUN apt-get update && \
         libgl1 \
         libegl1 \
         libatk-adaptor \
+        dbus \
+        network-manager \
         socat \
         locales \
         fonts-noto-cjk \
@@ -75,6 +78,28 @@ RUN apt-get update && \
     sed -i '/zh_CN.UTF-8/s/^# //g' /etc/locale.gen && \
     locale-gen zh_CN.UTF-8 && \
     rm -rf /var/lib/apt/lists/*
+
+# D-Bus system bus 支持
+# connectivity_plus 通过 D-Bus 连接 NetworkManager 检测网络状态
+# 容器内需有 dbus-daemon 提供 system bus socket，否则 connectivity_plus 无限重试吃满 CPU
+# 方案：安装 dbus + network-manager（提供 NM 的 D-Bus 服务和 introspection 数据）
+#       startapp.sh 中启动 dbus-daemon --system + NetworkManager
+RUN mkdir -p /var/run/dbus && \
+    dbus-uuidgen --ensure && \
+    printf '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"\n\
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n\
+<busconfig>\n\
+  <type>system</type>\n\
+  <auth>ANONYMOUS</auth>\n\
+  <allow_anonymous/>\n\
+  <listen>unix:path=/var/run/dbus/system_bus_socket</listen>\n\
+  <policy context="default">\n\
+    <allow send_destination="*"/>\n\
+    <allow receive_sender="*"/>\n\
+    <allow own="*"/>\n\
+    <allow user="*"/>\n\
+  </policy>\n\
+</busconfig>\n' > /etc/dbus-1/system.conf
 
 # ── 区域设置 ──
 ENV LANG=zh_CN.UTF-8
@@ -85,8 +110,21 @@ ENV LC_ALL=zh_CN.UTF-8
 ENV GSK_RENDERER=cairo
 
 # ── 启动脚本 ──
+# D-Bus system bus 策略：
+#   若宿主机已挂载 /run/dbus/system_bus_socket，则直接使用（宿主机有完整 NetworkManager）
+#   否则容器内自建 dbus-daemon + NetworkManager
 # socat: 宿主机 9091 → FlClash 内部 API 9090
 RUN printf '#!/bin/sh\n\
+mkdir -p /var/run/dbus\n\
+if [ -S /run/dbus/system_bus_socket ]; then\n\
+  echo "检测到宿主机 D-Bus system bus，跳过容器内 dbus-daemon"\n\
+else\n\
+  echo "未检测到宿主机 D-Bus system bus，启动容器内 dbus-daemon"\n\
+  rm -f /var/run/dbus/pid /var/run/dbus/system_bus_socket\n\
+  dbus-daemon --system --config-file=/etc/dbus-1/system.conf\n\
+  NetworkManager --no-daemon &\n\
+  sleep 1\n\
+fi\n\
 socat TCP-LISTEN:9091,fork,reuseaddr TCP:127.0.0.1:9090 &\n\
 exec FlClash\n' > /startapp.sh && chmod +x /startapp.sh
 

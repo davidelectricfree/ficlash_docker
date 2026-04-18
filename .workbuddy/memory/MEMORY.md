@@ -13,6 +13,7 @@
 - 跨 stage COPY 时不能复制符号链接，必须复制实际二进制 `/usr/share/FlClash/FlClash`
 - FlClash 是 glibc 编译的 GTK/Flutter 应用，**Alpine 的 musl libc 不兼容**（exec 报 "not found"，exit 127）
 - Flutter 启动时在 GSK 渲染器初始化之前先 dlopen libEGL.so.1，**即使设了 GSK_RENDERER=cairo 也必须装 libegl1**，否则 SIGABRT
+- `connectivity_plus` 插件通过 D-Bus NetworkManager 检测网络，**容器内无 system bus socket 会导致无限重试吃满 CPU**，必须安装 dbus 包并启动 dbus-daemon --system
 - `/dist` 目录需显式 `mkdir -p` 创建
 - control.tar.zst 需用 zstandard 库解压，非 gzip
 - FlClash 目录包含资源文件（不只是二进制），必须整体复制 `/usr/share/FlClash`
@@ -23,3 +24,4 @@
 - 2026-04-18: 修复容器运行 FlClash 报 "not found" exit 127，根因是 FlClash 为 glibc 编译，Alpine musl 不兼容；将运行层从 Alpine 改为 Ubuntu
 - 2026-04-18: 修复 SIGABRT（缺 libGL + locale），添加 libgl1、locale-gen zh_CN.UTF-8、GSK_RENDERER=cairo
 - 2026-04-18: 修复 SIGABRT（缺 libEGL.so.1），添加 libegl1、libatk-adaptor；Flutter 即使 GSK_RENDERER=cairo 也需 libegl1
+- 2026-04-18: 修复 CPU 占用过高，根因是 connectivity_plus 无 D-Bus system bus 进入无限重试；安装 dbus 包 + 启动 dbus-daemon --system
