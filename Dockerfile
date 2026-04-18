@@ -32,7 +32,8 @@ ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
 
 # ── 下载并安装 FlClash ───────────────────────────────────────
-# 优先使用 CI 注入的 FLCLASH_VERSION；若为 "latest" 则自动查询最新版
+# FlClash Release 只有 .AppImage 和 .deb 两种 Linux 包，
+# 优先使用 .AppImage（自包含无需额外依赖），回退用 .deb + dpkg -x
 RUN set -ex; \
     if [ "$FLCLASH_VERSION" = "latest" ]; then \
         echo "未指定版本，自动获取最新 Release..."; \
@@ -41,27 +42,27 @@ RUN set -ex; \
     fi; \
     echo "目标版本: $FLCLASH_VERSION"; \
     \
-    # 尝试下载 tar.gz（Alpine 首选，无需 dpkg 依赖）
-    URL_TGZ="https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${FLCLASH_VERSION#v}-linux-amd64.tar.gz"; \
-    URL_DEB="https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${FLCLASH_VERSION#v}-linux-amd64.deb"; \
+    # 文件名中的版本号不带前缀 v（如 tag=v0.8.92 → 文件名=0.8.92）
+    VER="${FLCLASH_VERSION#v}"; \
     \
-    if wget -q --spider "$URL_TGZ" 2>/dev/null; then \
-        echo "使用 tar.gz 安装: $URL_TGZ"; \
-        wget -O /tmp/flclash.tar.gz "$URL_TGZ"; \
-        mkdir -p /tmp/flclash-extract; \
-        tar -xzf /tmp/flclash.tar.gz -C /tmp/flclash-extract/; \
-        find /tmp/flclash-extract -name 'FlClash' -type f -exec mv {} /usr/local/bin/FlClash \;; \
-        rm -rf /tmp/flclash.tar.gz /tmp/flclash-extract/; \
+    # 优先用 AppImage（自包含，最适合 Docker 容器）
+    URL_APPIMAGE="https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${VER}-linux-amd64.AppImage"; \
+    URL_DEB="https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${VER}-linux-amd64.deb"; \
+    \
+    if wget -q --spider "$URL_APPIMAGE" 2>/dev/null; then \
+        echo "使用 AppImage 安装: $URL_APPIMAGE"; \
+        wget -O /usr/local/bin/FlClash "$URL_APPIMAGE"; \
     else \
-        echo "tar.gz 不可用，尝试 deb 安装（需要 dpkg）: $URL_DEB"; \
+        echo "AppImage 不可用，尝试 deb 安装（dpkg -x 解压）: $URL_DEB"; \
         add-pkg dpkg; \
         wget -O /tmp/flclash.deb "$URL_DEB"; \
+        mkdir -p /tmp/flclash-deb; \
         dpkg -x /tmp/flclash.deb /tmp/flclash-deb/; \
         find /tmp/flclash-deb -name 'FlClash' -type f -exec mv {} /usr/local/bin/FlClash \;; \
         rm -rf /tmp/flclash.deb /tmp/flclash-deb/; \
     fi; \
     chmod +x /usr/local/bin/FlClash; \
-    echo "FlClash 安装完成: $(FlClash --version 2>/dev/null || echo '版本信息不可用')"
+    echo "FlClash 安装完成"
 
 # ── 启动脚本 ────────────────────────────────────────────────
 # socat 将宿主机可达的 9091 转发到 FlClash 内部 API 9090
