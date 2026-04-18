@@ -13,14 +13,15 @@ RUN apt-get update && \
 
 WORKDIR /tmp
 
-# 拉取最新版本号
+# 拉取最新版本号并下载 deb
 RUN FLCLASH_VERSION=$(curl -s https://api.github.com/repos/chen08209/FlClash/releases/latest \
         | jq -r '.tag_name') && \
     echo "FlClash 版本: $FLCLASH_VERSION" && \
     VER="${FLCLASH_VERSION#v}" && \
-    echo "下载 deb 包..." && \
-    wget -q -O /tmp/flclash.deb \
-        "https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${VER}-linux-amd64.deb"
+    URL="https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${VER}-linux-amd64.deb" && \
+    echo "下载: $URL" && \
+    curl -fL -o /tmp/flclash.deb "$URL" && \
+    ls -la /tmp/flclash.deb
 
 # 安装 deb（apt-get 自动处理所有依赖并把二进制放到 /usr/bin/flclash）
 RUN apt-get update && \
