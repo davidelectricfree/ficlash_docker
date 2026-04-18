@@ -17,6 +17,7 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.23/community" >> /etc/apk/rep
 
 # ── 安装依赖 ────────────────────────────────────────────────
 # 注意：Alpine 3.23 中 appindicator 已迁移为 libayatana-appindicator
+# 安装 dpkg-dev（提供 ar 命令）用于提取 deb 包
 RUN add-pkg \
         socat \
         dbus \
@@ -25,7 +26,8 @@ RUN add-pkg \
         wget \
         jq \
         font-noto-cjk \
-        font-wqy-zenhei
+        font-wqy-zenhei \
+        dpkg-dev
 
 # ── 区域设置（Alpine musl，无需 locale-gen）──────────────────
 ENV LANG=zh_CN.UTF-8
@@ -47,13 +49,25 @@ RUN set -ex; \
     URL_DEB="https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${VER}-linux-amd64.deb"; \
     \
     echo "使用 deb 安装: $URL_DEB"; \
-    add-pkg dpkg; \
     wget -O /tmp/flclash.deb "$URL_DEB"; \
-    mkdir -p /tmp/flclash-deb; \
-    dpkg -x /tmp/flclash.deb /tmp/flclash-deb/; \
-    # deb 包解压后，二进制通常在 /usr/bin/flclash
-    find /tmp/flclash-deb -name 'flclash' -type f -executable -exec mv {} /usr/local/bin/FlClash \;; \
-    rm -rf /tmp/flclash.deb /tmp/flclash-deb/; \
+    mkdir -p /tmp/flclash-extract; \
+    # deb 本质是 ar 压缩包，用 ar x 直接拆包（不依赖 dpkg）
+    ar x /tmp/flclash.deb --output=/tmp/flclash-extract; \
+    # 找到解压出来的 debian-binary / data.tar.xz，手动处理
+    if [ -f /tmp/flclash-extract/data.tar.xz ]; then \
+        tar -xJf /tmp/flclash-extract/data.tar.xz -C /tmp/flclash-extract/; \
+    elif [ -f /tmp/flclash-extract/data.tar.gz ]; then \
+        tar -xzf /tmp/flclash-extract/data.tar.gz -C /tmp/flclash-extract/; \
+    fi; \
+    # FlClash deb 安装后二进制位于 /usr/bin/flclash（小写）
+    if [ -f /tmp/flclash-extract/usr/bin/flclash ]; then \
+        mv /tmp/flclash-extract/usr/bin/flclash /usr/local/bin/FlClash; \
+    else \
+        # 兜底：递归查找任意 flclash 可执行文件
+        find /tmp/flclash-extract -name 'flclash' -type f -executable \
+            -exec mv {} /usr/local/bin/FlClash \;; \
+    fi; \
+    rm -rf /tmp/flclash.deb /tmp/flclash-extract/; \
     chmod +x /usr/local/bin/FlClash; \
     echo "FlClash 安装完成"
 
