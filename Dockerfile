@@ -50,8 +50,14 @@ RUN set -ex; \
     URL_DEB="https://github.com/chen08209/FlClash/releases/download/${FLCLASH_VERSION}/FlClash-${VER}-linux-amd64.deb"; \
     \
     if wget -q --spider "$URL_APPIMAGE" 2>/dev/null; then \
-        echo "使用 AppImage 安装: $URL_APPIMAGE"; \
-        wget -O /usr/local/bin/FlClash "$URL_APPIMAGE"; \
+        echo "使用 AppImage 安装（提取真实二进制）: $URL_APPIMAGE"; \
+        wget -O /tmp/flclash.AppImage "$URL_APPIMAGE"; \
+        chmod +x /tmp/flclash.AppImage; \
+        # AppImage 无法在 Docker 中直接执行（缺 FUSE），必须提取 squashfs 内容
+        cd /tmp; /tmp/flclash.AppImage --appimage-extract > /dev/null 2>&1; \
+        # 从 squashfs-root 中找到可执行的 FlClash 主程序
+        mv /tmp/squashfs-root/flclash /usr/local/bin/FlClash; \
+        rm -rf /tmp/flclash.AppImage /tmp/squashfs-root; \
     else \
         echo "AppImage 不可用，尝试 deb 安装（dpkg -x 解压）: $URL_DEB"; \
         add-pkg dpkg; \
