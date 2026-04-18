@@ -79,28 +79,32 @@ RUN apt-get update && \
     locale-gen zh_CN.UTF-8 && \
     rm -rf /var/lib/apt/lists/*
 
-# D-Bus system bus 支持
+# D-Bus system bus + NetworkManager 支持
 # connectivity_plus 通过 D-Bus 连接 NetworkManager 检测网络状态
-# 容器内需有 dbus-daemon 提供 system bus socket，否则 connectivity_plus 无限重试吃满 CPU
-# 方案：始终在容器内自建 dbus-daemon + NetworkManager
-# NM 无需 NET_ADMIN 也能启动，只是无法管理网络接口，但会在 D-Bus 上注册并报告状态
-# 注意：不要挂载宿主机 /run/dbus/system_bus_socket，否则容器内 dbus-daemon 无法启动
+# 无 NM 服务时 connectivity_plus 无限重试吃满 CPU
+#
+# jlesage/baseimage-gui 已内置 dbus 服务（supervisor 管理），会自动启动系统 dbus-daemon
+# 所以不需要自定义 system.conf，也不需要手动启动 dbus-daemon
+# 只需安装 network-manager 包，并让它在 dbus 启动后自动运行
+#
+# 方案：用 cont-init.d 脚本（root 权限执行）创建 NM 需要的目录并启动 NM
+# NM 无需 NET_ADMIN 也能启动，会在 D-Bus 上注册 org.freedesktop.NetworkManager
 RUN mkdir -p /var/run/dbus && \
     dbus-uuidgen --ensure && \
-    printf '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"\n\
- "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n\
-<busconfig>\n\
-  <type>system</type>\n\
-  <auth>ANONYMOUS</auth>\n\
-  <allow_anonymous/>\n\
-  <listen>unix:path=/var/run/dbus/system_bus_socket</listen>\n\
-  <policy context="default">\n\
-    <allow send_destination="*"/>\n\
-    <allow receive_sender="*"/>\n\
-    <allow own="*"/>\n\
-    <allow user="*"/>\n\
-  </policy>\n\
-</busconfig>\n' > /etc/dbus-1/system.conf
+    printf '#!/bin/sh\n\
+# 启动 NetworkManager，让 connectivity_plus 能通过 D-Bus 查询网络状态\n\
+mkdir -p /run/NetworkManager\n\
+mkdir -p /var/run/dbus\n\
+# 等待系统 dbus-daemon 就绪\n\
+for i in 1 2 3 4 5; do\n\
+  if [ -S /var/run/dbus/system_bus_socket ]; then\n\
+    break\n\
+  fi\n\
+  sleep 1\n\
+done\n\
+NetworkManager &\n\
+sleep 2\n\
+' > /etc/cont-init.d/50-networkmanager.sh && chmod +x /etc/cont-init.d/50-networkmanager.sh
 
 # ── 区域设置 ──
 ENV LANG=zh_CN.UTF-8
@@ -111,17 +115,10 @@ ENV LC_ALL=zh_CN.UTF-8
 ENV GSK_RENDERER=cairo
 
 # ── 启动脚本 ──
-# 始终在容器内启动 dbus-daemon + NetworkManager
-# connectivity_plus 需要通过 D-Bus 查询 NM 的网络状态，否则无限重试吃满 CPU
-# NM 在容器内无需 NET_ADMIN 也可启动，只是报告 ASLEEP 状态（connectivity_plus 会将其视为已连接）
-# 重要：不要挂载宿主机的 /run/dbus/system_bus_socket，让容器使用自己的
+# dbus-daemon 和 NetworkManager 由 cont-init.d 脚本以 root 权限启动
+# startapp.sh 只需启动 socat 转发和 FlClash 本体
 # socat: 宿主机 9091 → FlClash 内部 API 9090
 RUN printf '#!/bin/sh\n\
-mkdir -p /var/run/dbus\n\
-rm -f /var/run/dbus/pid /var/run/dbus/system_bus_socket\n\
-dbus-daemon --system --config-file=/etc/dbus-1/system.conf\n\
-NetworkManager &\n\
-sleep 2\n\
 socat TCP-LISTEN:9091,fork,reuseaddr TCP:127.0.0.1:9090 &\n\
 exec FlClash\n' > /startapp.sh && chmod +x /startapp.sh
 
