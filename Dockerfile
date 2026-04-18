@@ -9,7 +9,7 @@ FROM ubuntu:24.04 AS extractor
 ARG FLCLASH_VERSION=latest
 
 RUN apt-get update && \
-    apt-get install -y wget jq && rm -rf /var/lib/apt/lists/*
+    apt-get install -y wget jq curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp
 
