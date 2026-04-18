@@ -8,18 +8,15 @@ FROM ubuntu:24.04 AS extractor
 
 ARG FLCLASH_VERSION=latest
 
-# 一次性安装工具包 + FlClash 运行时依赖
+# 一次性安装工具包 + FlClash deb 声明的依赖
+# 注意：deb 的 Depends 字段声明的是 -dev 包，必须精确匹配
 # ca-certificates: curl 下载 GitHub release 必需，否则 exit code 77
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         wget jq curl \
-        libkeybinder-3.0-0 \
-        libayatana-appindicator3-1 \
-        libgtk-3-0 \
-        libblkid1 \
-        liblzma5 \
-        libsecret-1-0 && \
+        libkeybinder-3.0-dev \
+        libayatana-appindicator3-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp
@@ -35,14 +32,16 @@ RUN FLCLASH_VERSION=$(curl -s https://api.github.com/repos/chen08209/FlClash/rel
     ls -la /tmp/flclash.deb
 
 # 安装 deb：先 apt-get update 恢复索引，再用 apt-get install 解析 deb 依赖
+# deb postinst 创建符号链接 /usr/bin/FlClash → /usr/share/FlClash/FlClash
+# 直接复制实际二进制 /usr/share/FlClash/FlClash（符号链接在跨 stage 时不生效）
 RUN apt-get update && \
     apt-get install -y /tmp/flclash.deb && \
     rm /tmp/flclash.deb && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /dist && \
-    ls -la /usr/bin/flclash && \
-    cp /usr/bin/flclash /dist/flclash && \
-    chmod +x /dist/flclash && \
+    ls -la /usr/share/FlClash/FlClash && \
+    cp /usr/share/FlClash/FlClash /dist/FlClash && \
+    chmod +x /dist/FlClash && \
     echo "二进制提取完成"
 
 # ── Stage 2：Alpine 运行层（镜像体积小、CPU 占用低）────────
@@ -51,7 +50,7 @@ FROM jlesage/baseimage-gui:alpine-3.23-v4.11.3
 ARG DOCKER_IMAGE_VERSION=unknown
 
 # ── 从 Stage 1 复制提取好的二进制 ──────────────────────────
-COPY --from=extractor /dist/flclash /usr/local/bin/FlClash
+COPY --from=extractor /dist/FlClash /usr/local/bin/FlClash
 
 # ── 安装必要依赖 ────────────────────────────────────────────
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.23/community" >> /etc/apk/repositories && \
