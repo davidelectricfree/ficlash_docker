@@ -8,10 +8,11 @@ FROM ubuntu:24.04 AS extractor
 
 ARG FLCLASH_VERSION=latest
 
-# 一次性安装工具包 + FlClash 运行时依赖，再下载并安装 deb
-# 关键：apt-get update 后不删除 lists，确保后续 apt-get install .deb 能解析依赖
+# 一次性安装工具包 + FlClash 运行时依赖
+# ca-certificates: curl 下载 GitHub release 必需，否则 exit code 77
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        ca-certificates \
         wget jq curl \
         libkeybinder-3.0-0 \
         libayatana-appindicator3-1 \

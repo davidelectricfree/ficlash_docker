@@ -14,3 +14,4 @@
 
 ## 修复历史
 - 2026-04-18: 修复 Dockerfile 构建失败（exit code 2），根因是 Stage 1 缺少 FlClash 运行时依赖 + 未在安装 deb 前 apt-get update 恢复索引
+- 2026-04-18: 修复 curl 下载 GitHub release 失败（exit code 77），根因是 ubuntu:24.04 基础镜像未安装 ca-certificates，导致 HTTPS 证书验证失败
