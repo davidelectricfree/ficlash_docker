@@ -1,9 +1,9 @@
 #
 # FlClash Dockerfile
-# Multi-stage build: Ubuntu 提取 deb 二进制 → Alpine 运行（最小体积 + 最低 CPU 占用）
+# Multi-stage build: Ubuntu 提取 deb 二进制 → Ubuntu 运行（FlClash 依赖 glibc，不兼容 Alpine musl）
 #
 
-# ── Stage 1：从 deb 包提取二进制（Ubuntu apt-get 自动处理依赖）──
+# ── Stage 1：从 deb 包提取完整安装 ──
 FROM ubuntu:24.04 AS extractor
 
 ARG FLCLASH_VERSION=latest
@@ -32,62 +32,67 @@ RUN FLCLASH_VERSION=$(curl -s https://api.github.com/repos/chen08209/FlClash/rel
     ls -la /tmp/flclash.deb
 
 # 安装 deb：先 apt-get update 恢复索引，再用 apt-get install 解析 deb 依赖
-# deb postinst 创建符号链接 /usr/bin/FlClash → /usr/share/FlClash/FlClash
-# 直接复制实际二进制 /usr/share/FlClash/FlClash（符号链接在跨 stage 时不生效）
+# 复制整个 /usr/share/FlClash 目录（含二进制 + 资源文件）到 /dist
 RUN apt-get update && \
     apt-get install -y /tmp/flclash.deb && \
     rm /tmp/flclash.deb && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /dist && \
-    ls -la /usr/share/FlClash/FlClash && \
-    cp /usr/share/FlClash/FlClash /dist/FlClash && \
-    chmod +x /dist/FlClash && \
+    cp -a /usr/share/FlClash /dist/FlClash && \
+    chmod +x /dist/FlClash/FlClash && \
     echo "二进制提取完成"
 
-# ── Stage 2：Alpine 运行层（镜像体积小、CPU 占用低）────────
-FROM jlesage/baseimage-gui:alpine-3.23-v4.11.3
+# ── Stage 2：Ubuntu 运行层 ──
+# FlClash 是 glibc 编译的 GTK/Flutter 应用，Alpine 的 musl libc 不兼容
+# 使用 jlesage/baseimage-gui 的 Ubuntu 变体（同样提供 noVNC/VNC GUI）
+FROM jlesage/baseimage-gui:ubuntu-24.04-v4.11.3
 
 ARG DOCKER_IMAGE_VERSION=unknown
 
-# ── 从 Stage 1 复制提取好的二进制 ──────────────────────────
-COPY --from=extractor /dist/FlClash /usr/local/bin/FlClash
+# ── 从 Stage 1 复制 FlClash 安装目录 ──
+COPY --from=extractor /dist/FlClash /usr/share/FlClash
 
-# ── 安装必要依赖 ────────────────────────────────────────────
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.23/community" >> /etc/apk/repositories && \
-    add-pkg \
+# 创建符号链接让 FlClash 可在 PATH 中找到
+RUN ln -sf /usr/share/FlClash/FlClash /usr/local/bin/FlClash
+
+# ── 安装运行时依赖 ──
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libkeybinder-3.0-0 \
+        libayatana-appindicator3-1 \
+        libgtk-3-0 \
         socat \
-        dbus \
-        libayatana-appindicator \
-        font-noto-cjk \
-        font-wqy-zenhei
+        fonts-noto-cjk \
+        fonts-wqy-zenhei && \
+    rm -rf /var/lib/apt/lists/*
 
-# ── 区域设置 ────────────────────────────────────────────────
+# ── 区域设置 ──
 ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
 
-# ── 启动脚本 ────────────────────────────────────────────────
+# ── 启动脚本 ──
 # socat: 宿主机 9091 → FlClash 内部 API 9090
 RUN printf '#!/bin/sh\n\
 socat TCP-LISTEN:9091,fork,reuseaddr TCP:127.0.0.1:9090 &\n\
 exec FlClash\n' > /startapp.sh && chmod +x /startapp.sh
 
-# ── baseimage-gui 应用元信息 ────────────────────────────────
+# ── baseimage-gui 应用元信息 ──
 RUN \
     set-cont-env APP_NAME "FlClash" && \
     set-cont-env DOCKER_IMAGE_VERSION "$DOCKER_IMAGE_VERSION" && \
     true
 
-# ── 持久化配置目录 ──────────────────────────────────────────
+# ── 持久化配置目录 ──
 VOLUME ["/config"]
 
-# ── 端口暴露 ────────────────────────────────────────────────
+# ── 端口暴露 ──
 # 5800 = Web GUI (noVNC)  5900 = VNC  7890 = HTTP 代理
 # 1053 = DNS（UDP）  9091 = 外部 API（socat 转发）
 EXPOSE 5800 5900 7890/tcp 1053/udp 9091/tcp
 
-# ── Metadata ────────────────────────────────────────────────
+# ── Metadata ──
 LABEL \
     org.label-schema.name="flclash" \
-    org.label-schema.description="Docker container for FlClash (Alpine-based, multi-stage)" \
+    org.label-schema.description="Docker container for FlClash (Ubuntu-based, multi-stage)" \
     org.label-schema.version="${DOCKER_IMAGE_VERSION:-unknown}" \
     org.label-schema.schema-version="1.0"
