@@ -1,0 +1,203 @@
+name: Build FlClash Docker Image
+
+on:
+  # ── 定期检查：每周一 UTC 02:00 运行 ─────────────────────────
+  schedule:
+    - cron: '0 2 * * 1'
+
+  # ── 手动触发（可指定版本或强制重建）────────────────────────────
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: '强制重新构建（忽略版本检查）'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      custom_tag:
+        description: '自定义镜像标签（留空则自动使用 FlClash 版本号）'
+        required: false
+        default: ''
+
+  # ── 当 Dockerfile 或 workflow 文件本身有改动时也触发 ──────────
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'Dockerfile'
+      - '.github/workflows/docker-build.yml'
+
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'Dockerfile'
+      - '.github/workflows/docker-build.yml'
+
+env:
+  IMAGE_NAME: 'flclash'
+  REGISTRY: 'ghcr.io'
+
+jobs:
+  # ════════════════════════════════════════════════════════════
+  # Job 1：检查 FlClash 是否有新版本
+  # ════════════════════════════════════════════════════════════
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      flclash_version: ${{ steps.check.outputs.flclash_version }}
+      flclash_tag: ${{ steps.check.outputs.flclash_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check FlClash latest version
+        id: check
+        run: |
+          echo "=== 获取 FlClash 最新 Release 信息 ==="
+          RELEASE_JSON=$(curl -s https://api.github.com/repos/chen08209/FlClash/releases/latest)
+          LATEST_TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+          LATEST_VERSION=$(echo "$LATEST_TAG" | sed 's/^v//')
+
+          echo "FlClash 最新版本: $LATEST_TAG"
+          echo "flclash_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          echo "flclash_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+          # ── 读取上次构建的版本（存储在 .last-built-version 文件中）──
+          LAST_VERSION=""
+          if [ -f ".last-built-version" ]; then
+            LAST_VERSION=$(cat .last-built-version)
+            echo "上次构建版本: $LAST_VERSION"
+          else
+            echo "未找到历史版本文件，视为首次构建"
+          fi
+
+          # ── 判断是否需要构建 ────────────────────────────────────
+          FORCE="${{ github.event.inputs.force_rebuild }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "强制重建模式，跳过版本比较"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          elif [ "$LATEST_TAG" != "$LAST_VERSION" ]; then
+            echo "发现新版本 ($LAST_VERSION → $LATEST_TAG)，将触发构建"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "版本未变化 ($LATEST_TAG)，跳过构建"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ════════════════════════════════════════════════════════════
+  # Job 2：构建并推送 Docker 镜像
+  # ════════════════════════════════════════════════════════════
+  build:
+    runs-on: ubuntu-latest
+    needs: check-version
+    # 仅在需要构建、且非 PR 的情况下运行（PR 只做 check，不推送）
+    if: |
+      needs.check-version.outputs.should_build == 'true' ||
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request'
+
+    permissions:
+      contents: write   # 需要写权限以更新 .last-built-version
+      packages: write   # 推送到 GHCR
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 确定最终使用的镜像标签 ──────────────────────────────────
+      - name: Resolve image tags
+        id: resolve_tags
+        run: |
+          FLCLASH_VER="${{ needs.check-version.outputs.flclash_version }}"
+          CUSTOM_TAG="${{ github.event.inputs.custom_tag }}"
+
+          # 优先使用自定义标签，否则用 FlClash 版本号
+          if [ -n "$CUSTOM_TAG" ]; then
+            VERSION_TAG="$CUSTOM_TAG"
+          else
+            VERSION_TAG="$FLCLASH_VER"
+          fi
+
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          BASE="${{ env.REGISTRY }}/$OWNER/${{ env.IMAGE_NAME }}"
+
+          echo "version_tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+          echo "image_base=$BASE" >> $GITHUB_OUTPUT
+          echo "full_tags=${BASE}:${VERSION_TAG},${BASE}:latest" >> $GITHUB_OUTPUT
+
+          echo "=== 将使用以下标签 ==="
+          echo "  ${BASE}:${VERSION_TAG}"
+          echo "  ${BASE}:latest"
+
+      - name: Debug build info
+        run: |
+          echo "仓库:          ${{ github.repository }}"
+          echo "事件类型:      ${{ github.event_name }}"
+          echo "FlClash 版本:  ${{ needs.check-version.outputs.flclash_tag }}"
+          echo "镜像标签:      ${{ steps.resolve_tags.outputs.full_tags }}"
+          echo "是否推送:      ${{ github.event_name != 'pull_request' }}"
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.resolve_tags.outputs.image_base }}
+          tags: |
+            type=raw,value=${{ steps.resolve_tags.outputs.version_tag }}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 传入 FlClash 版本号，Dockerfile 可通过 ARG 使用
+          build-args: |
+            FLCLASH_VERSION=${{ needs.check-version.outputs.flclash_tag }}
+            DOCKER_IMAGE_VERSION=${{ needs.check-version.outputs.flclash_version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      # ── 构建成功后，将新版本号写回仓库，供下次比较 ───────────────
+      - name: Update last-built-version file
+        if: github.event_name != 'pull_request' && success()
+        run: |
+          echo "${{ needs.check-version.outputs.flclash_tag }}" > .last-built-version
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .last-built-version
+          # 如果文件没有变化，git commit 会报错，用 || true 忽略
+          git diff --cached --quiet || \
+            git commit -m "chore: update last built FlClash version to ${{ needs.check-version.outputs.flclash_tag }} [skip ci]"
+          git push
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 构建摘要" >> $GITHUB_STEP_SUMMARY
+          echo "| 字段 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| FlClash 版本 | ${{ needs.check-version.outputs.flclash_tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 镜像标签 | \`${{ steps.resolve_tags.outputs.full_tags }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 触发方式 | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 构建状态 | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
