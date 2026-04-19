@@ -1,0 +1,27 @@
+version: '3'
+services:
+  flclash-docker:
+    build: .
+    image: ghcr.io/davidelectricfree/flclash:latest
+    container_name: flclash-docker
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    networks:
+      - test_app
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "27890:7890"
+      - "25800:5800"
+      - "25900:5900"
+      - "21053:1053"
+      - "29091:9091"
+    restart: unless-stopped
+
+networks:
+  test_app:
+    name: test_app
+    driver: bridge
